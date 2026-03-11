@@ -79,23 +79,22 @@ export const Download = {
 
 // ── Поиск трека на hitmotop, возвращает прямую MP3-ссылку ─────
 async function findOnHitmotop(track, signal) {
-  // Формируем поисковый запрос: "Artist Title"
   const query = [track.artist, track.title].filter(Boolean).join(' ');
   const searchUrl = HITMO_SEARCH + encodeURIComponent(query);
 
-  // Грузим через прокси (hitmotop — обычный HTML-сайт, прокси справляются)
   let html = null;
   for (const proxy of PROXIES) {
     try {
-      const res = await fetch(proxy + encodeURIComponent(searchUrl), {
-        signal,
-        headers: { 'Accept': 'text/html' },
-      });
+      const res = await fetch(proxy + encodeURIComponent(searchUrl), { signal });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const text = await res.text();
-      if (text.includes('track__info') || text.includes('hitmotop')) {
+      // Принимаем только страницы с реальными результатами поиска
+      if (text.includes('p-track-download-btn')) {
         html = text;
+        console.log('[hitmo] search results found');
         break;
+      } else {
+        console.warn('[hitmo] no results in response (got main page or empty results)');
       }
     } catch (e) {
       if (e.name === 'AbortError') throw e;
@@ -105,12 +104,13 @@ async function findOnHitmotop(track, signal) {
 
   if (!html) return null;
 
-  // Парсим MP3-ссылки из HTML: /get/music/YYYYMMDD/Artist_Title_ID.mp3
+  // Ссылка в href атрибуте тега с классом p-track-download-btn
+  // Формат: https://rus.hitmotop.com/get/music/YYYYMMDD/Artist_-_Title_ID.mp3
   const mp3Pattern = /href="(https?:\/\/(?:rus|ru)\.hitmotop\.com\/get\/music\/[^"]+\.mp3)"/gi;
   const matches = [...html.matchAll(mp3Pattern)];
   if (!matches.length) return null;
 
-  // Берём первый результат — самый релевантный
+  console.log('[hitmo] found MP3:', matches[0][1]);
   return matches[0][1];
 }
 
