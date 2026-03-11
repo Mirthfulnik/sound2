@@ -59,6 +59,26 @@ export async function fetchPage(url) {
 //   <a href="https://illit.skysound7.com/t/ID-slug/"><em>Magnetic</em></a>
 // </li>
 
+
+// ── HTML entity decoder ───────────────────────────────────────
+// Браузерный DOMParser — самый надёжный способ декодировать
+// &#039; → ' и другие entities из HTML источника
+function decodeEntities(str) {
+  try {
+    const txt = document.createElement('textarea');
+    txt.innerHTML = str;
+    return txt.value;
+  } catch {
+    return str
+      .replace(/&#039;/g, "'")
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n));
+  }
+}
+
 export function parseTrackList(html, genre = '') {
   const tracks = [];
   const liRegex = /<li(?:\s[^>]*)?>[\s\S]*?<\/li>/gi;
@@ -82,10 +102,10 @@ export function parseTrackList(html, genre = '') {
     let title = '';
     const emM = li.match(/<(?:em|i)[^>]*>([^<]+)<\/(?:em|i)>/i);
     if (emM) {
-      title = emM[1].trim();
+      title = decodeEntities(emM[1].trim());
     } else {
       const tM = li.match(/href="[^"]+\/t\/[^"]+?"[^>]*>([^<]+)<\/a>/i);
-      if (tM) title = tM[1].trim();
+      if (tM) title = decodeEntities(tM[1].trim());
     }
 
     // Artist: first <a> pointing to artist subdomain (no /t/)
@@ -95,7 +115,7 @@ export function parseTrackList(html, genre = '') {
       const href = lm[1];
       const text = lm[2].replace(/<[^>]+>/g, '').trim();
       if (!href.includes('/t/') && href.includes('skysound7.com') && text.length > 0) {
-        artist = text;
+        artist = decodeEntities(text);
         break;
       }
     }
