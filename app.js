@@ -277,7 +277,7 @@ function makeTrackHandlers(tracks) {
       updateLikeButton(btn, isNowLiked);
       refreshFavorites();
       showToast(isNowLiked ? '♥ Добавлено в избранное' : '♡ Убрано из избранного');
-      Sync.pushLiked(Liked.all());
+      Sync.pushLiked(Liked.getAll());
       if (Player.currentTrack?.url === track.url) {
         updatePlayerBar({ track: Player.currentTrack });
       }
@@ -410,7 +410,7 @@ function handleDownload(track, btn) {
 
       showToast('✓ Трек сохранён и добавлен в избранное');
       refreshFavorites();
-      Offline.list().then(tracks => Sync.pushOffline(tracks));
+      Offline.getAll().then(tracks => Sync.pushOffline(tracks));
     },
     onError: (msg) => {
       updateDownloadButton(btn, 'idle');
@@ -484,6 +484,7 @@ function initPlayerBar() {
       if (btn.dataset.url === track.url) updateLikeButton(btn, isNowLiked);
     });
     showToast(isNowLiked ? '♥ Добавлено в избранное' : '♡ Убрано из избранного');
+    Sync.pushLiked(Liked.getAll()); // синхронизируем после лайка/анлайка в плеере
   });
 
   document.getElementById('playerDownloadBtn').addEventListener('click', async () => {
