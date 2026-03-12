@@ -6,6 +6,7 @@ import { Wave }     from './modules/wave.js';
 import { Liked, Offline } from './modules/storage.js';
 import { Download } from './modules/download.js';
 import { Auth, openTelegramLogin } from './modules/auth.js';
+import { Sync } from './modules/sync.js';
 import { search, loadGenrePage, GENRES } from './modules/parser.js';
 import {
   initNav, renderTrackList, updateLikeButton, updateDownloadButton,
@@ -20,10 +21,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   await Auth.init();
   updateAuthUI();
 
+  // Если уже авторизован — тянем данные с сервера
+  if (Auth.isLoggedIn()) {
+    Sync.pull().then(remote => {
+      if (remote?.liked?.length) {
+        remote.liked.forEach(t => { if (!Liked.isLiked(t.url)) Liked.add(t); });
+        refreshFavorites();
+      }
+    });
+  }
+
   // Слушаем события авторизации
-  window.addEventListener('auth:login', (e) => {
+  window.addEventListener('auth:login', async (e) => {
     updateAuthUI();
     showToast('✓ Вы вошли как ' + (e.detail.name || e.detail.username), 'success');
+    const remote = await Sync.pull();
+    if (remote?.liked?.length) {
+      remote.liked.forEach(t => { if (!Liked.isLiked(t.url)) Liked.add(t); });
+      refreshFavorites();
+    }
   });
   window.addEventListener('auth:logout', () => {
     updateAuthUI();
@@ -214,6 +230,7 @@ function makeTrackHandlers(tracks) {
       updateLikeButton(btn, isNowLiked);
       refreshFavorites();
       showToast(isNowLiked ? '♥ Добавлено в избранное' : '♡ Убрано из избранного');
+      Sync.pushLiked(Liked.all());
       if (Player.currentTrack?.url === track.url) {
         updatePlayerBar({ track: Player.currentTrack });
       }
@@ -226,12 +243,70 @@ function makeTrackHandlers(tracks) {
 }
 
 // ── Download ──────────────────────────────────────────────────
+// ── VPN / Auth hint ───────────────────────────────────────────
+function showVpnHint(onContinue) {
+  if (sessionStorage.getItem('vpn_hint_shown')) { onContinue(); return; }
+  sessionStorage.setItem('vpn_hint_shown', '1');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  overlay.innerHTML = `
+    <div class="confirm-dialog vpn-hint-dialog">
+      <div class="vpn-hint-icon">🔒</div>
+      <div class="confirm-msg">
+        <strong>Для скачивания треков</strong><br>
+        Включите VPN для стабильной работы.<br>
+        Или авторизуйтесь через Telegram — это позволит сохранять треки в облаке.
+      </div>
+      <div class="confirm-btns">
+        <button class="confirm-cancel" id="vpnContinueBtn">Продолжить без VPN</button>
+        <button class="confirm-ok" id="vpnTgBtn">${Auth.isLoggedIn() ? '✓ Аккаунт подключён' : 'Войти через Telegram'}</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('visible'));
+
+  const close = (cb) => {
+    overlay.classList.remove('visible');
+    setTimeout(() => { overlay.remove(); cb?.(); }, 200);
+  };
+
+  overlay.querySelector('#vpnContinueBtn').onclick = () => close(onContinue);
+  overlay.querySelector('#vpnTgBtn').onclick = () => {
+    if (Auth.isLoggedIn()) { close(onContinue); return; }
+    close(() => showTelegramAuth());
+  };
+  overlay.onclick = (e) => { if (e.target === overlay) close(onContinue); };
+}
+
+function showTelegramAuth() {
+  openTelegramLogin(() => updateAuthUI());
+}
+
+function updateAuthUI() {
+  const user = Auth.user;
+  const authBtn = document.getElementById('authBtn');
+  if (!authBtn) return;
+  if (user) {
+    authBtn.innerHTML = (user.photo
+      ? `<img src="${user.photo}" class="auth-avatar"> `
+      : '👤 ') + (user.name || user.username);
+    authBtn.classList.add('logged-in');
+    authBtn.onclick = () => { if (confirm('Выйти из аккаунта?')) Auth.logout(); };
+  } else {
+    authBtn.innerHTML = '🔐 Войти';
+    authBtn.classList.remove('logged-in');
+    authBtn.onclick = showTelegramAuth;
+  }
+}
+
 function handleDownload(track, btn) {
   if (Download.isDownloading(track.url)) return;
 
-  updateDownloadButton(btn, 'downloading', 0);
-
-  Download.start(track, {
+  showVpnHint(() => {
+    updateDownloadButton(btn, 'downloading', 0);
+    Download.start(track, {
     onProgress: ({ percent }) => {
       updateDownloadButton(btn, 'downloading', percent);
       const pbBtn = document.getElementById('playerDownloadBtn');
@@ -258,12 +333,14 @@ function handleDownload(track, btn) {
 
       showToast('✓ Трек сохранён и добавлен в избранное');
       refreshFavorites();
+      Offline.list().then(tracks => Sync.pushOffline(tracks));
     },
     onError: (msg) => {
       updateDownloadButton(btn, 'idle');
       showToast('Ошибка загрузки: ' + msg, 'error');
     },
-  });
+    });
+  }); // showVpnHint
 }
 
 async function handleDelete(track, btn) {
