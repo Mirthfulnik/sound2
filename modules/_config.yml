@@ -1,0 +1,14 @@
+# Отключаем Jekyll обработку — отдаём файлы как есть
+include:
+  - modules
+  - assets
+
+# Исключаем служебные файлы
+exclude:
+  - README.md
+  - "*.zip"
+
+# Не обрабатывать JS файлы как шаблоны
+keep_files:
+  - modules
+  - assets
