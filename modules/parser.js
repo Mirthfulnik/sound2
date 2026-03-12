@@ -1,10 +1,7 @@
 // ── parser.js ─────────────────────────────────────────────────
-// All network requests go through a CORS proxy.
-// Primary:  Yandex Cloud Function (stable in RU)
-// Fallback: Cloudflare Worker
+// All network requests go through Cloudflare Worker proxy.
 
 const PROXIES = [
-  'https://functions.yandexcloud.net/d4ebfvpcafvdghfva6fs?url=',
   'https://silent-boat-5c96.chatgptnik.workers.dev/?url=',
 ];
 const BASE = 'https://skysound7.com';
@@ -93,6 +90,10 @@ export function parseTrackList(html, genre = '') {
     if (!trackHref) continue;
 
     const trackUrl = ensureTrailingSlash(trackHref[1]);
+
+    // Пропускаем числовые поддомены — они не существуют на skysound7
+    const numericSubdomain = trackUrl.match(/https?:\/\/(\d+)\.skysound7\.com/);
+    if (numericSubdomain) continue;
 
     // Duration
     const durM     = li.match(/\b(\d{1,2}:\d{2})\b/);
