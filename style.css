@@ -15,19 +15,32 @@
   --nav-h:     64px;
   --radius:    12px;
   --radius-sm: 8px;
+
+  /* Safe area — единые переменные как в budget app */
+  --safeT: env(safe-area-inset-top, 0px);
+  --safeB: env(safe-area-inset-bottom, 0px);
+  --safeL: env(safe-area-inset-left, 0px);
+  --safeR: env(safe-area-inset-right, 0px);
 }
 
 /* ── Reset ─────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
-  height: 100%;
-  overflow: hidden;
+  margin: 0;
   -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Syne', sans-serif;
-  -webkit-font-smoothing: antialiased;
+  /* Контент не перекрывается плеером и навом снизу,
+     плюс safe-area для home indicator */
+  padding-bottom: calc(var(--player-h) + var(--nav-h) + var(--safeB) + 8px);
+  /* Safe area сверху (челка) */
+  padding-top: var(--safeT);
+  overflow-x: hidden;
 }
 
 button { cursor: pointer; font-family: inherit; }
@@ -38,29 +51,16 @@ a { color: inherit; text-decoration: none; }
 .app-shell {
   display: flex;
   flex-direction: column;
-  /* safe-area учитываем через padding, высота = весь экран */
-  height: 100dvh;
-  height: 100svh; /* iOS Safari 15.4+ точнее считает */
-  padding-top: env(safe-area-inset-top, 0px);
-  overflow: hidden;
-  position: fixed;
-  inset: 0;
-  /* Нижний отступ для home indicator учитывается в bottom-nav */
+  min-height: 100vh;
 }
 
 /* ── Screens ───────────────────────────────────────────────── */
 .screens {
   flex: 1;
-  overflow: hidden;
-  position: relative;
 }
 
 .view {
   display: none;
-  position: absolute;
-  inset: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
 }
 .view.active { display: block; }
 
@@ -402,14 +402,20 @@ a { color: inherit; text-decoration: none; }
 
 /* ── PLAYER BAR ────────────────────────────────────────────── */
 .player-bar {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: calc(var(--nav-h) + var(--safeB) + 16px);
   height: var(--player-h);
-  background: var(--bg2);
+  background: rgba(17, 17, 24, 0.95);
   border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   display: flex;
   align-items: center;
   padding: 0 16px;
   gap: 12px;
-  flex-shrink: 0;
+  z-index: 40;
 }
 
 .player-track {
@@ -570,22 +576,22 @@ a { color: inherit; text-decoration: none; }
 
 /* ── BOTTOM NAV ────────────────────────────────────────────── */
 .bottom-nav {
-  /* Высота nav + home indicator зона */
-  height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
-  background: var(--bg2);
-  border-top: 1px solid var(--border);
-  display: grid;
-  /* Кнопки занимают только --nav-h, остаток — home indicator */
-  grid-template-rows: var(--nav-h) env(safe-area-inset-bottom, 0px);
-  align-items: start;
-  grid-auto-flow: column;
-  flex-shrink: 0;
-  position: relative;
-}
-
-/* Все nav-item выровнены в первой строке grid */
-.bottom-nav > * {
-  grid-row: 1;
+  position: fixed;
+  left: 12px; right: 12px;
+  bottom: calc(8px + var(--safeB));
+  height: var(--nav-h);
+  border-radius: 20px;
+  background: rgba(17, 17, 24, 0.85);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 8px 10px;
+  z-index: 50;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  gap: 4px;
 }
 
 .nav-item {
@@ -602,6 +608,8 @@ a { color: inherit; text-decoration: none; }
   transition: all 0.15s;
   min-width: 0;
   flex: 1;
+  cursor: pointer;
+  user-select: none;
 }
 .nav-item span {
   font-size: 10px;
@@ -615,7 +623,7 @@ a { color: inherit; text-decoration: none; }
 /* ── TOAST ─────────────────────────────────────────────────── */
 .toast {
   position: fixed;
-  bottom: calc(var(--player-h) + var(--nav-h) + env(safe-area-inset-bottom, 0px) + 12px);
+  bottom: calc(var(--player-h) + var(--nav-h) + var(--safeB) + 28px);
   left: 50%;
   transform: translateX(-50%) translateY(10px);
   background: var(--bg4);
@@ -642,22 +650,34 @@ a { color: inherit; text-decoration: none; }
 
 /* ── RESPONSIVE ────────────────────────────────────────────── */
 
-/* Tablet & Desktop: side nav instead of bottom nav */
+/* Tablet & Desktop: side nav */
 @media (min-width: 680px) {
-  .app-shell {
-    flex-direction: row;
+  body {
+    /* На десктопе — боковой nav, убираем нижний padding */
+    padding-bottom: 0;
+    padding-top: var(--safeT);
+    padding-left: 200px; /* ширина бокового nav */
   }
 
   .bottom-nav {
+    /* Переключаемся в боковой режим */
+    position: fixed;
+    left: 0; right: auto; bottom: 0; top: 0;
     width: 200px;
-    height: auto;
+    height: 100%;
+    border-radius: 0;
     flex-direction: column;
     justify-content: flex-start;
-    padding: 24px 12px;
-    border-top: none;
+    align-items: stretch;
+    padding: calc(24px + var(--safeT)) 12px calc(16px + var(--safeB));
     border-right: 1px solid var(--border);
+    border-top: none;
+    background: var(--bg2);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
     gap: 4px;
-    order: -1;
+    z-index: 50;
   }
 
   .nav-item {
@@ -665,47 +685,35 @@ a { color: inherit; text-decoration: none; }
     justify-content: flex-start;
     gap: 10px;
     padding: 11px 14px;
-    width: 100%;
     flex: none;
+    width: 100%;
+    border-radius: var(--radius);
   }
   .nav-item span { font-size: 13px; }
 
-  .screens {
-    flex: 1;
-  }
-
+  /* Плеер — прибит к низу, не перекрывает боковой nav */
   .player-bar {
-    /* On desktop, player stays at bottom of the right column */
+    left: 200px;
+    bottom: 0;
+    border-top: 1px solid var(--border);
+    border-bottom: none;
+    height: calc(var(--player-h) + var(--safeB));
+    padding-bottom: var(--safeB);
   }
 
-  /* Wrap screens + player in a column */
-  .app-shell {
-    display: grid;
-    grid-template-columns: 200px 1fr;
-    grid-template-rows: 1fr var(--player-h);
-    grid-template-areas:
-      "nav  screens"
-      "nav  player";
-  }
-
-  .bottom-nav { grid-area: nav; }
-  .screens    { grid-area: screens; }
-  .player-bar {
-    grid-area: player;
-    border-left: 1px solid var(--border);
+  body {
+    padding-bottom: calc(var(--player-h) + var(--safeB));
   }
 
   .player-right { display: flex; }
-
   .screen-inner { padding: 32px 40px 24px; }
 }
 
-/* Wide desktop: bigger content area */
+/* Wide desktop */
 @media (min-width: 1100px) {
+  body { padding-left: 240px; }
   .bottom-nav { width: 240px; }
-  .app-shell {
-    grid-template-columns: 240px 1fr;
-  }
+  .player-bar { left: 240px; }
 }
 
 
@@ -922,60 +930,59 @@ a { color: inherit; text-decoration: none; }
 
 /* ── Auth button in nav ───────────────────────────────────────── */
 .auth-nav-item {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  color: var(--text3);
-  overflow: hidden;
-  padding: 8px 4px;
-  min-width: 0;
-  flex: 1;
+  /* Наследует стиль .nav-item */
 }
 
 .auth-nav-item.logged-in {
   color: var(--accent);
 }
 
-/* Имя — скрыто на мобилке */
-.auth-name {
-  display: none;
-}
-
-/* Аватар — основной элемент на мобилке */
+/* Аватар */
 .auth-avatar {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: block;
-  margin: 0 auto;
   border: 2px solid var(--accent);
   object-fit: cover;
+  flex-shrink: 0;
 }
 
-/* Иконка замка/эмодзи когда не залогинен */
-.auth-nav-item:not(.logged-in) {
-  font-size: 22px;
-  line-height: 1;
+/* Иконки замка/профиля — единый размер с другими nav SVG */
+.auth-icon {
+  width: 22px;
+  height: 22px;
+  stroke: currentColor;
+  fill: none;
+  flex-shrink: 0;
 }
 
-/* На десктопе — показываем имя */
+/* Подпись nav кнопки */
+.auth-name {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60px;
+}
+
+/* Мобилка: скрываем текст, оставляем только иконку/аватар */
+@media (max-width: 679px) {
+  .auth-name { display: none; }
+}
+
+/* На десктопе — горизонтальный layout */
 @media (min-width: 680px) {
-  .auth-name {
-    display: block;
-    font-size: 11px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 80px;
-  }
-  .auth-avatar {
-    width: 22px;
-    height: 22px;
-  }
-  .auth-nav-item:not(.logged-in) {
-    font-size: 18px;
-  }
   .auth-nav-item {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 11px 14px;
+    height: auto;
+    width: 100%;
+    flex: none;
     max-width: 100%;
     font-size: 13px;
   }
