@@ -880,3 +880,36 @@ a { color: inherit; text-decoration: none; }
 .confirm-cancel:hover { background: var(--border); }
 .confirm-ok { background: var(--danger); color: #fff; }
 .confirm-ok:hover { background: #ff5c8a; }
+
+/* ── VPN / Auth hint dialog ──────────────────────────────────── */
+.vpn-hint-dialog {
+  gap: 16px;
+}
+
+.vpn-hint-icon {
+  font-size: 36px;
+  text-align: center;
+  line-height: 1;
+}
+
+.vpn-hint-dialog .confirm-msg {
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--text);
+}
+
+.vpn-hint-dialog .confirm-msg strong {
+  color: var(--text);
+  font-size: 15px;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.vpn-hint-dialog #vpnTgBtn {
+  background: #2AABEE;
+  color: #fff;
+}
+.vpn-hint-dialog #vpnTgBtn:hover {
+  background: #1d96d3;
+}
