@@ -5,6 +5,7 @@ import { Player }   from './modules/player.js';
 import { Wave }     from './modules/wave.js';
 import { Liked, Offline } from './modules/storage.js';
 import { Download } from './modules/download.js';
+import { Auth, openTelegramLogin } from './modules/auth.js';
 import { search, loadGenrePage, GENRES } from './modules/parser.js';
 import {
   initNav, renderTrackList, updateLikeButton, updateDownloadButton,
@@ -15,6 +16,23 @@ import {
 
 // ── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  // Инициализация авторизации
+  await Auth.init();
+  updateAuthUI();
+
+  // Слушаем события авторизации
+  window.addEventListener('auth:login', (e) => {
+    updateAuthUI();
+    showToast('✓ Вы вошли как ' + (e.detail.name || e.detail.username), 'success');
+  });
+  window.addEventListener('auth:logout', () => {
+    updateAuthUI();
+    showToast('Вы вышли из аккаунта');
+  });
+  window.addEventListener('auth:error', (e) => {
+    showToast('Ошибка авторизации: ' + e.detail, 'error');
+  });
+
   initNav();
   initWaveScreen();
   initSearchScreen();
@@ -208,52 +226,12 @@ function makeTrackHandlers(tracks) {
 }
 
 // ── Download ──────────────────────────────────────────────────
-// ── VPN / Auth hint ───────────────────────────────────────────
-function showVpnHint(onContinue) {
-  // Один раз за сессию
-  if (sessionStorage.getItem('vpn_hint_shown')) { onContinue(); return; }
-  sessionStorage.setItem('vpn_hint_shown', '1');
-
-  const overlay = document.createElement('div');
-  overlay.className = 'confirm-overlay';
-  overlay.innerHTML = `
-    <div class="confirm-dialog vpn-hint-dialog">
-      <div class="vpn-hint-icon">🔒</div>
-      <div class="confirm-msg">
-        <strong>Для скачивания треков</strong><br>
-        Включите VPN для стабильной работы.<br>
-        Или авторизуйтесь через Telegram — это позволит сохранять треки в облаке.
-      </div>
-      <div class="confirm-btns">
-        <button class="confirm-cancel" id="vpnContinueBtn">Продолжить без VPN</button>
-        <button class="confirm-ok" id="vpnTgBtn">Войти через Telegram</button>
-      </div>
-    </div>`;
-
-  document.body.appendChild(overlay);
-  requestAnimationFrame(() => overlay.classList.add('visible'));
-
-  const close = (cb) => {
-    overlay.classList.remove('visible');
-    setTimeout(() => { overlay.remove(); cb?.(); }, 200);
-  };
-
-  overlay.querySelector('#vpnContinueBtn').onclick = () => close(onContinue);
-  overlay.querySelector('#vpnTgBtn').onclick = () => close(() => showTelegramAuth());
-  overlay.onclick = (e) => { if (e.target === overlay) close(onContinue); };
-}
-
-function showTelegramAuth() {
-  // Заглушка — будет реализована в следующей итерации
-  showToast('Авторизация через Telegram — скоро!', 'info');
-}
-
 function handleDownload(track, btn) {
   if (Download.isDownloading(track.url)) return;
 
-  showVpnHint(() => {
-    updateDownloadButton(btn, 'downloading', 0);
-    Download.start(track, {
+  updateDownloadButton(btn, 'downloading', 0);
+
+  Download.start(track, {
     onProgress: ({ percent }) => {
       updateDownloadButton(btn, 'downloading', percent);
       const pbBtn = document.getElementById('playerDownloadBtn');
@@ -285,8 +263,7 @@ function handleDownload(track, btn) {
       updateDownloadButton(btn, 'idle');
       showToast('Ошибка загрузки: ' + msg, 'error');
     },
-    });
-  }); // showVpnHint
+  });
 }
 
 async function handleDelete(track, btn) {
