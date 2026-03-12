@@ -2,7 +2,10 @@
 // Telegram Login Widget + JWT хранение.
 // AUTH_URL — URL вашей Yandex Function tg-auth (без /auth на конце)
 
-const AUTH_URL   = 'https://functions.yandexcloud.net/d4ebehbkbja32u0et4rl';
+const AUTH_DIRECT = 'https://functions.yandexcloud.net/d4ebehbkbja32u0et4rl';
+// Роутим через CF прокси чтобы обойти CORS блокировку Yandex Functions
+const CF_PROXY   = 'https://silent-boat-5c96.chatgptnik.workers.dev/?url=';
+const AUTH_URL   = CF_PROXY + encodeURIComponent(AUTH_DIRECT);
 const BOT_NAME   = 'sound_auth_bot';
 const TOKEN_KEY  = 'ss_jwt';
 const USER_KEY   = 'ss_user';
@@ -27,7 +30,7 @@ export const Auth = {
     const token = this.token;
     if (!token) return null;
     try {
-      const res = await fetch(AUTH_URL + '/me', {
+      const res = await fetch(CF_PROXY + encodeURIComponent(AUTH_DIRECT + '/me'), {
         headers: { 'Authorization': 'Bearer ' + token },
       });
       if (!res.ok) { this.logout(); return null; }
@@ -55,7 +58,7 @@ export function openTelegramLogin(onSuccess) {
   window._tgAuthCallback = async (tgData) => {
     closeModal();
     try {
-      const res = await fetch(AUTH_URL + '/auth', {
+      const res = await fetch(CF_PROXY + encodeURIComponent(AUTH_DIRECT + '/auth'), {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(tgData),
