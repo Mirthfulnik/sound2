@@ -21,25 +21,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   await Auth.init();
   updateAuthUI();
 
-  // Если уже авторизован — тянем данные с сервера
+  // Если уже авторизован — двусторонняя синхронизация
   if (Auth.isLoggedIn()) {
-    Sync.pull().then(remote => {
-      if (remote?.liked?.length) {
-        remote.liked.forEach(t => { if (!Liked.isLiked(t.url)) Liked.add(t); });
-        refreshFavorites();
-      }
-    });
+    syncBothWays();
   }
 
   // Слушаем события авторизации
   window.addEventListener('auth:login', async (e) => {
     updateAuthUI();
     showToast('✓ Вы вошли как ' + (e.detail.name || e.detail.username), 'success');
-    const remote = await Sync.pull();
-    if (remote?.liked?.length) {
-      remote.liked.forEach(t => { if (!Liked.isLiked(t.url)) Liked.add(t); });
-      refreshFavorites();
-    }
+    await syncBothWays();
   });
   window.addEventListener('auth:logout', () => {
     updateAuthUI();
@@ -298,6 +289,33 @@ function updateAuthUI() {
     authBtn.innerHTML = '🔐 Войти';
     authBtn.classList.remove('logged-in');
     authBtn.onclick = showTelegramAuth;
+  }
+}
+
+// ── Двусторонняя синхронизация лайков ────────────────────────
+// Мержим локальные → KV и KV → локальные
+async function syncBothWays() {
+  try {
+    const remote = await Sync.pull();
+    const local  = Liked.getAll();
+
+    // KV → локально (добавляем треки которых нет локально)
+    let changed = false;
+    if (remote?.liked?.length) {
+      remote.liked.forEach(t => {
+        if (!Liked.isLiked(t.url)) { Liked.add(t); changed = true; }
+      });
+    }
+    if (changed) refreshFavorites();
+
+    // Локально → KV (пушим мёрж если локальных больше чем в KV)
+    const merged = Liked.getAll();
+    const remoteCount = remote?.liked?.length || 0;
+    if (merged.length > remoteCount) {
+      Sync.pushLiked(merged);
+    }
+  } catch (e) {
+    console.warn('[sync] syncBothWays failed:', e.message);
   }
 }
 
