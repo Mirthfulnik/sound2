@@ -10,7 +10,7 @@
   --danger:    #e74c7c;
   --text:      #e8e8f0;
   --text2:     #888898;
-  --text3:     #444458;
+  --text3:     #7878a0;
   --player-h:  80px;
   --nav-h:     64px;
   --radius:    12px;
@@ -46,6 +46,7 @@ a { color: inherit; text-decoration: none; }
   display: flex;
   flex-direction: column;
   height: 100dvh;
+  padding-top: env(safe-area-inset-top, 0px);
   height: -webkit-fill-available; /* PWA iOS Safari fix */
   max-height: 100dvh;
   overflow: hidden;
@@ -573,11 +574,11 @@ a { color: inherit; text-decoration: none; }
 
 /* ── BOTTOM NAV ────────────────────────────────────────────── */
 .bottom-nav {
-  height: var(--nav-h);
+  height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
   background: var(--bg2);
   border-top: 1px solid var(--border);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-around;
   padding: 0 8px;
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -926,6 +927,21 @@ a { color: inherit; text-decoration: none; }
   padding: 8px 6px;
 }
 
+/* На мобилке в auth кнопке — только фото/иконка */
+@media (max-width: 599px) {
+  .auth-nav-item .auth-name {
+    display: none;
+  }
+  .auth-nav-item {
+    max-width: 48px;
+    padding: 8px 4px;
+  }
+  .auth-avatar {
+    width: 24px;
+    height: 24px;
+  }
+}
+
 .auth-nav-item.logged-in {
   color: var(--accent);
 }
@@ -943,4 +959,10 @@ a { color: inherit; text-decoration: none; }
     max-width: 100%;
     font-size: 13px;
   }
+}
+
+/* ── Favorites search bar ─────────────────────────────────────── */
+.fav-search-bar {
+  margin-bottom: 8px;
+  flex-shrink: 0;
 }
