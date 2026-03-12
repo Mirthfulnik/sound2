@@ -1,5 +1,5 @@
 // ── app.js ────────────────────────────────────────────────────
-// Entry point. Wires modules together, handles screen logic.
+// Entry point. Wires modules together, handles screen logic. 
 
 import { Player }   from './modules/player.js';
 import { Wave }     from './modules/wave.js';
