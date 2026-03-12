@@ -1,19 +1,19 @@
 // ── app.js ────────────────────────────────────────────────────
 // Entry point. Wires modules together, handles screen logic. 
 
-import { Player }   from './player.js';
-import { Wave }     from './wave.js';
-import { Liked, Offline } from './storage.js';
-import { Download } from './download.js';
-import { Auth, openTelegramLogin } from './auth.js';
-import { Sync } from './sync.js';
-import { search, loadGenrePage, GENRES } from './parser.js';
+import { Player }   from './modules/player.js';
+import { Wave }     from './modules/wave.js';
+import { Liked, Offline } from './modules/storage.js';
+import { Download } from './modules/download.js';
+import { Auth, openTelegramLogin } from './modules/auth.js';
+import { Sync } from './modules/sync.js';
+import { search, loadGenrePage, GENRES } from './modules/parser.js';
 import {
   initNav, renderTrackList, updateLikeButton, updateDownloadButton,
   markPlayingTrack, updatePlayerBar, setWaveState, updateWaveNowPlaying,
   loadingHTML, emptyHTML, showToast, showConfirm, formatTime,
   downloadIconSVG, downloadedIconSVG,
-} from './ui.js';
+} from './modules/ui.js';
 
 // ── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
