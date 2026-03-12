@@ -1,10 +1,6 @@
 // ── player.js ─────────────────────────────────────────────────
 // Manages the audio element, queue, and playback state.
-//
-// iOS Safari requires audio.play() to be called synchronously
-// within a user gesture. We solve this by:
-// 1. Calling audio.play() immediately on click (unlocks audio context)
-// 2. Then fetching the real src and re-playing
+// Emits custom DOM events so UI modules can react without tight coupling.
 //
 // Events dispatched on document:
 //   player:track-changed  → { track, index }
@@ -15,31 +11,26 @@
 import { parseMp3, fetchPage } from './parser.js';
 import { History, Offline } from './storage.js';
 
+// CF Worker proxy — используем для MP3 чтобы Safari мог воспроизвести
+// без VPN (sunproxy.net заблокирован в РФ без VPN)
+const CF_PROXY = 'https://silent-boat-5c96.chatgptnik.workers.dev/?url=';
+
+function proxyMp3(url) {
+  if (!url) return url;
+  // Если URL уже через прокси или это blob — не трогаем
+  if (url.startsWith('blob:') || url.includes('chatgptnik.workers.dev')) return url;
+  // Проксируем sunproxy и другие CDN через CF Worker
+  return CF_PROXY + encodeURIComponent(url);
+}
+
 const audio = new Audio();
 audio.preload = 'auto';
 
-let queue      = [];
+let queue      = [];   // Track[]
 let queueIndex = -1;
 let shuffle    = false;
 let repeat     = false;
 let loading    = false;
-
-// ── iOS audio unlock ──────────────────────────────────────────
-// Safari requires the very first play() call to be synchronous
-// inside a user gesture. We keep track of whether audio is
-// unlocked so we only need to do this once per session.
-let audioUnlocked = false;
-
-function unlockAudio() {
-  if (audioUnlocked) return;
-  // Play silence synchronously — this satisfies iOS gesture requirement
-  audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-  audio.volume = 0;
-  const p = audio.play();
-  if (p) p.catch(() => {});
-  audioUnlocked = true;
-  audio.volume = 1;
-}
 
 // ── Public API ────────────────────────────────────────────────
 export const Player = {
@@ -50,8 +41,6 @@ export const Player = {
   get queueLength()  { return queue.length; },
 
   setQueue(tracks, startIndex = 0) {
-    // Called directly from click handler — unlock audio synchronously HERE
-    unlockAudio();
     queue = tracks;
     queueIndex = startIndex;
     return this.playIndex(startIndex);
@@ -74,31 +63,15 @@ export const Player = {
         const html = await fetchPage(track.url);
         const mp3  = parseMp3(html);
         if (!mp3) throw new Error('MP3-ссылка не найдена на странице трека');
-        track.mp3Url = mp3;
-        src = mp3;
+        track.mp3Url = mp3; // cache for download button (оригинальный URL)
+        src = proxyMp3(mp3); // воспроизводим через прокси для Safari/PWA
       }
 
-      // Set src and play — audio is already unlocked from setQueue/gesture
       audio.src = src;
-      audio.volume = 1;
-
-      // Use load() + play() for better iOS compatibility
-      audio.load();
       await audio.play();
-
       History.add(track.url);
       emit('player:state-changed', { playing: true });
     } catch (e) {
-      // NotSupportedError on iOS = src not set yet or format issue
-      // Try once more after a short delay
-      if (e.name === 'NotSupportedError' || e.name === 'AbortError') {
-        try {
-          await new Promise(r => setTimeout(r, 300));
-          await audio.play();
-          emit('player:state-changed', { playing: true });
-          return;
-        } catch (e2) { /* fall through to error */ }
-      }
       emit('player:error', { message: e.message });
     } finally {
       loading = false;
@@ -106,10 +79,9 @@ export const Player = {
   },
 
   togglePlay() {
-    if (!audio.src || audio.src.startsWith('data:')) return;
+    if (!audio.src) return;
     if (audio.paused) {
-      unlockAudio();
-      audio.play().then(() => emit('player:state-changed', { playing: true })).catch(() => {});
+      audio.play().then(() => emit('player:state-changed', { playing: true }));
     } else {
       audio.pause();
       emit('player:state-changed', { playing: false });
@@ -117,12 +89,11 @@ export const Player = {
   },
 
   prev() {
-    unlockAudio();
     if (audio.currentTime > 3) { audio.currentTime = 0; return; }
     if (queueIndex > 0) this.playIndex(queueIndex - 1);
   },
 
-  next() { unlockAudio(); playNext(); },
+  next() { playNext(); },
 
   seek(percent) {
     if (!audio.duration) return;
@@ -135,11 +106,13 @@ export const Player = {
   toggleShuffle() { shuffle = !shuffle; return shuffle; },
   toggleRepeat()  { repeat  = !repeat;  return repeat; },
 
+  // Replace current queue without changing playback
   appendToQueue(tracks) { queue = queue.concat(tracks); },
+
   isLoading() { return loading; },
 };
 
-// ── Internal ──────────────────────────────────────────────────
+// ── Internal playback logic ───────────────────────────────────
 function playNext() {
   if (!queue.length) return;
   let next;
@@ -150,7 +123,7 @@ function playNext() {
   } else if (repeat) {
     next = 0;
   } else {
-    return;
+    return; // end of queue
   }
   Player.playIndex(next);
 }
@@ -175,7 +148,11 @@ audio.addEventListener('timeupdate', () => {
 });
 
 audio.addEventListener('loadedmetadata', () => {
-  emit('player:progress', { currentTime: 0, duration: audio.duration, percent: 0 });
+  emit('player:progress', {
+    currentTime: 0,
+    duration:    audio.duration,
+    percent:     0,
+  });
 });
 
 audio.addEventListener('pause', () => emit('player:state-changed', { playing: false }));
