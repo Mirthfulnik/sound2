@@ -1,101 +1,466 @@
-// ── auth.js ───────────────────────────────────────────────────
-// Telegram Login Widget + JWT хранение.
-// AUTH_URL — URL вашей Yandex Function tg-auth (без /auth на конце)
+// ── app.js ────────────────────────────────────────────────────
+// Entry point. Wires modules together, handles screen logic.
 
-const AUTH_URL   = 'https://functions.yandexcloud.net/d4ebehbkbja32u0et4rl';
-const BOT_NAME   = 'sound_auth_bot';
-const TOKEN_KEY  = 'ss_jwt';
-const USER_KEY   = 'ss_user';
+import { Player }   from './modules/player.js';
+import { Wave }     from './modules/wave.js';
+import { Liked, Offline } from './modules/storage.js';
+import { Download } from './modules/download.js';
+import { Auth, openTelegramLogin } from './modules/auth.js';
+import { Sync } from './modules/sync.js';
+import { search, loadGenrePage, GENRES } from './modules/parser.js';
+import {
+  initNav, renderTrackList, updateLikeButton, updateDownloadButton,
+  markPlayingTrack, updatePlayerBar, setWaveState, updateWaveNowPlaying,
+  loadingHTML, emptyHTML, showToast, showConfirm, formatTime,
+  downloadIconSVG, downloadedIconSVG,
+} from './modules/ui.js';
 
-// ── Публичное API ─────────────────────────────────────────────
-export const Auth = {
-  // Текущий пользователь (из localStorage) или null
-  get user() {
-    try { return JSON.parse(localStorage.getItem(USER_KEY)); } catch { return null; }
-  },
+// ── Init ──────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  // Инициализация авторизации
+  await Auth.init();
+  updateAuthUI();
 
-  get token() {
-    return localStorage.getItem(TOKEN_KEY);
-  },
+  // Если уже авторизован — тянем данные с сервера
+  if (Auth.isLoggedIn()) {
+    Sync.pull().then(remote => {
+      if (remote?.liked?.length) {
+        remote.liked.forEach(t => { if (!Liked.isLiked(t.url)) Liked.add(t); });
+        refreshFavorites();
+      }
+    });
+  }
 
-  isLoggedIn() {
-    return !!this.token && !!this.user;
-  },
-
-  // Инициализация — проверяем токен на сервере
-  async init() {
-    const token = this.token;
-    if (!token) return null;
-    try {
-      const res = await fetch(AUTH_URL + '/me', {
-        headers: { 'Authorization': 'Bearer ' + token },
-      });
-      if (!res.ok) { this.logout(); return null; }
-      const data = await res.json();
-      if (!data.ok) { this.logout(); return null; }
-      localStorage.setItem(USER_KEY, JSON.stringify(data.user));
-      return data.user;
-    } catch {
-      // Сеть недоступна — доверяем локальному кэшу
-      return this.user;
+  // Слушаем события авторизации
+  window.addEventListener('auth:login', async (e) => {
+    updateAuthUI();
+    showToast('✓ Вы вошли как ' + (e.detail.name || e.detail.username), 'success');
+    const remote = await Sync.pull();
+    if (remote?.liked?.length) {
+      remote.liked.forEach(t => { if (!Liked.isLiked(t.url)) Liked.add(t); });
+      refreshFavorites();
     }
-  },
+  });
+  window.addEventListener('auth:logout', () => {
+    updateAuthUI();
+    showToast('Вы вышли из аккаунта');
+  });
+  window.addEventListener('auth:error', (e) => {
+    showToast('Ошибка авторизации: ' + e.detail, 'error');
+  });
 
-  logout() {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-    emit('auth:logout');
-  },
-};
+  initNav();
+  initWaveScreen();
+  initSearchScreen();
+  initFavoritesScreen();
+  initPlayerBar();
+  initPlayerEvents();
+  restoreVolume();
+  await handleDeepLink();
+});
 
-// ── Telegram Login Widget ─────────────────────────────────────
-// Вызывается из app.js когда пользователь нажимает "Войти через Telegram"
-export function openTelegramLogin(onSuccess) {
-  // Telegram Widget открывает popup и вызывает callback
-  window._tgAuthCallback = async (tgData) => {
+// ════════════════════════════════════════════════════════════════
+// DEEP LINK — ?track=<encoded_track_page_url>
+// ════════════════════════════════════════════════════════════════
+async function handleDeepLink() {
+  const params = new URLSearchParams(location.search);
+  const trackUrl = params.get('track');
+  if (!trackUrl) return;
+
+  showToast('Загружаем трек по ссылке…');
+
+  try {
+    const decoded = decodeURIComponent(trackUrl);
+    const slugMatch = decoded.match(/\/t\/[^-]+-(.+?)\/?$/);
+    const subMatch  = decoded.match(/https?:\/\/([^.]+)\.skysound7/);
+    const title  = slugMatch ? decodeURIComponent(slugMatch[1]).replace(/-/g, ' ') : 'Трек';
+    const artist = subMatch  ? subMatch[1] : '—';
+
+    const track = { url: decoded, title, artist, duration: '' };
+    Player.setQueue([track], 0);
+    history.replaceState(null, '', location.pathname);
+  } catch (e) {
+    showToast('Не удалось загрузить трек из ссылки', 'error');
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// SCREEN 1 — МОЯ ВОЛНА
+// ════════════════════════════════════════════════════════════════
+function initWaveScreen() {
+  const settings = Wave.getSettings();
+
+  const genreSelect = document.getElementById('waveGenre');
+  GENRES.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g.value;
+    opt.textContent = g.label;
+    if (g.value === settings.genre) opt.selected = true;
+    genreSelect.appendChild(opt);
+  });
+
+  document.getElementById('waveMood').value        = settings.mood;
+  document.getElementById('waveSkipPlayed').checked = settings.skipPlayed;
+
+  document.getElementById('wavePlayBtn').addEventListener('click', async () => {
+    if (Wave.isActive()) {
+      Wave.stop();
+      setWaveState('idle');
+      return;
+    }
+
+    const currentSettings = {
+      genre:      genreSelect.value,
+      mood:       document.getElementById('waveMood').value,
+      skipPlayed: document.getElementById('waveSkipPlayed').checked,
+    };
+
+    setWaveState('loading');
+    await Wave.start(currentSettings);
+  });
+
+  document.addEventListener('wave:started', ({ detail }) => {
+    setWaveState('playing');
+    updateWaveNowPlaying(detail.track);
+    showToast('Волна запущена', 'success');
+  });
+
+  document.addEventListener('wave:error', ({ detail }) => {
+    setWaveState('idle');
+    showToast('Ошибка: ' + detail.message, 'error');
+  });
+
+  document.addEventListener('wave:stopped', () => setWaveState('idle'));
+}
+
+// ════════════════════════════════════════════════════════════════
+// SCREEN 2 — ПОИСК
+// ════════════════════════════════════════════════════════════════
+function initSearchScreen() {
+  const input   = document.getElementById('searchInput');
+  const btn     = document.getElementById('searchBtn');
+  const results = document.getElementById('searchResults');
+
+  document.querySelectorAll('.genre-tab').forEach(tab => {
+    tab.addEventListener('click', async () => {
+      document.querySelectorAll('.genre-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      results.innerHTML = loadingHTML();
+      try {
+        const tracks = await loadGenrePage(tab.dataset.genre);
+        renderSearchResults(tracks, results);
+      } catch (e) {
+        results.innerHTML = emptyHTML('Ошибка загрузки: ' + e.message);
+      }
+    });
+  });
+
+  const doSearch = async () => {
+    const q = input.value.trim();
+    if (!q) return;
+    results.innerHTML = loadingHTML('Поиск...');
+    document.querySelectorAll('.genre-tab').forEach(t => t.classList.remove('active'));
     try {
-      const res = await fetch(AUTH_URL + '/auth', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(tgData),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Auth failed');
-
-      localStorage.setItem(TOKEN_KEY, data.token);
-      localStorage.setItem(USER_KEY, JSON.stringify(data.user));
-      emit('auth:login', data.user);
-      onSuccess?.(data.user);
+      const tracks = await search(q);
+      if (!tracks.length) {
+        results.innerHTML = emptyHTML('По запросу «' + q + '» ничего не найдено');
+        return;
+      }
+      renderSearchResults(tracks, results);
     } catch (e) {
-      emit('auth:error', e.message);
+      results.innerHTML = emptyHTML('Ошибка поиска: ' + e.message);
     }
   };
 
-  // Динамически добавляем скрипт Telegram Widget
-  const existing = document.getElementById('tg-login-script');
-  if (existing) existing.remove();
-
-  const script = document.createElement('script');
-  script.id        = 'tg-login-script';
-  script.src       = 'https://telegram.org/js/telegram-widget.js?22';
-  script.setAttribute('data-telegram-login',    BOT_NAME);
-  script.setAttribute('data-size',              'large');
-  script.setAttribute('data-onauth',            '_tgAuthCallback(user)');
-  script.setAttribute('data-request-access',    'write');
-  script.async = true;
-
-  // Временный контейнер — widget сам откроет popup
-  const container = document.createElement('div');
-  container.style.cssText = 'position:fixed;opacity:0;pointer-events:none;top:0;left:0;';
-  container.appendChild(script);
-  document.body.appendChild(container);
-
-  // Скрипт загружается и автоматически открывает popup Telegram
-  // Удалим контейнер через 30 секунд если не авторизовался
-  setTimeout(() => container.remove(), 30000);
+  btn.addEventListener('click', doSearch);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
 }
 
-// ── Простой event emitter (если нет глобального) ──────────────
-function emit(event, detail) {
-  window.dispatchEvent(new CustomEvent(event, { detail }));
+function renderSearchResults(tracks, container) {
+  renderTrackList(container, tracks, makeTrackHandlers(tracks));
+}
+
+// ════════════════════════════════════════════════════════════════
+// SCREEN 3 — ИЗБРАННОЕ
+// ════════════════════════════════════════════════════════════════
+function initFavoritesScreen() {
+  refreshFavorites();
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.view === 'favorites') refreshFavorites();
+    });
+  });
+}
+
+function refreshFavorites() {
+  const container = document.getElementById('favoritesContainer');
+  const tracks    = Liked.getAll();
+
+  if (!tracks.length) {
+    container.innerHTML = emptyHTML('Здесь появятся треки, которые вы лайкнули ♡');
+    return;
+  }
+
+  renderTrackList(container, tracks, {
+    ...makeTrackHandlers(tracks),
+    onLikeToggle: (track, btn) => {
+      Liked.remove(track.url);
+      const row = btn.closest('.track-item');
+      row.style.transition = 'opacity 0.3s, transform 0.3s';
+      row.style.opacity    = '0';
+      row.style.transform  = 'translateX(-20px)';
+      setTimeout(() => refreshFavorites(), 300);
+      showToast('♡ Убрано из избранного');
+      if (Player.currentTrack?.url === track.url) {
+        updatePlayerBar({ track: Player.currentTrack });
+      }
+    },
+  });
+}
+
+// ════════════════════════════════════════════════════════════════
+// SHARED TRACK HANDLERS
+// ════════════════════════════════════════════════════════════════
+function makeTrackHandlers(tracks) {
+  return {
+    onPlay: (track, i) => Player.setQueue(tracks, i),
+
+    onLikeToggle: (track, btn) => {
+      const isNowLiked = Liked.toggle(track);
+      updateLikeButton(btn, isNowLiked);
+      refreshFavorites();
+      showToast(isNowLiked ? '♥ Добавлено в избранное' : '♡ Убрано из избранного');
+      Sync.pushLiked(Liked.all());
+      if (Player.currentTrack?.url === track.url) {
+        updatePlayerBar({ track: Player.currentTrack });
+      }
+    },
+
+    onDownload: (track, btn) => handleDownload(track, btn),
+    onDelete:   (track, btn) => handleDelete(track, btn),
+    onShare:    (track)      => handleShare(track),
+  };
+}
+
+// ── Download ──────────────────────────────────────────────────
+// ── VPN / Auth hint ───────────────────────────────────────────
+function showVpnHint(onContinue) {
+  if (sessionStorage.getItem('vpn_hint_shown')) { onContinue(); return; }
+  sessionStorage.setItem('vpn_hint_shown', '1');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  overlay.innerHTML = `
+    <div class="confirm-dialog vpn-hint-dialog">
+      <div class="vpn-hint-icon">🔒</div>
+      <div class="confirm-msg">
+        <strong>Для скачивания треков</strong><br>
+        Включите VPN для стабильной работы.<br>
+        Или авторизуйтесь через Telegram — это позволит сохранять треки в облаке.
+      </div>
+      <div class="confirm-btns">
+        <button class="confirm-cancel" id="vpnContinueBtn">Продолжить без VPN</button>
+        <button class="confirm-ok" id="vpnTgBtn">${Auth.isLoggedIn() ? '✓ Аккаунт подключён' : 'Войти через Telegram'}</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('visible'));
+
+  const close = (cb) => {
+    overlay.classList.remove('visible');
+    setTimeout(() => { overlay.remove(); cb?.(); }, 200);
+  };
+
+  overlay.querySelector('#vpnContinueBtn').onclick = () => close(onContinue);
+  overlay.querySelector('#vpnTgBtn').onclick = () => {
+    if (Auth.isLoggedIn()) { close(onContinue); return; }
+    close(() => showTelegramAuth());
+  };
+  overlay.onclick = (e) => { if (e.target === overlay) close(onContinue); };
+}
+
+function showTelegramAuth() {
+  openTelegramLogin(() => updateAuthUI());
+}
+
+function updateAuthUI() {
+  const user = Auth.user;
+  const authBtn = document.getElementById('authBtn');
+  if (!authBtn) return;
+  if (user) {
+    authBtn.innerHTML = (user.photo
+      ? `<img src="${user.photo}" class="auth-avatar"> `
+      : '👤 ') + (user.name || user.username);
+    authBtn.classList.add('logged-in');
+    authBtn.onclick = () => { if (confirm('Выйти из аккаунта?')) Auth.logout(); };
+  } else {
+    authBtn.innerHTML = '🔐 Войти';
+    authBtn.classList.remove('logged-in');
+    authBtn.onclick = showTelegramAuth;
+  }
+}
+
+function handleDownload(track, btn) {
+  if (Download.isDownloading(track.url)) return;
+
+  showVpnHint(() => {
+    updateDownloadButton(btn, 'downloading', 0);
+    Download.start(track, {
+    onProgress: ({ percent }) => {
+      updateDownloadButton(btn, 'downloading', percent);
+      const pbBtn = document.getElementById('playerDownloadBtn');
+      if (pbBtn && pbBtn.dataset.url === track.url) {
+        updateDownloadButton(pbBtn, 'downloading', percent);
+      }
+    },
+    onDone: () => {
+      updateDownloadButton(btn, 'downloaded');
+      const pbBtn = document.getElementById('playerDownloadBtn');
+      if (pbBtn && pbBtn.dataset.url === track.url) updateDownloadButton(pbBtn, 'downloaded');
+
+      // Автоматически добавляем в избранное при скачивании
+      const wasLiked = Liked.isLiked(track.url);
+      if (!wasLiked) {
+        Liked.add(track);
+        // Обновляем кнопку лайка в player-bar
+        updatePlayerBar({ track: Player.currentTrack?.url === track.url ? Player.currentTrack : track });
+        // Обновляем кнопку лайка в списке треков
+        document.querySelectorAll('.like-btn[data-url]').forEach(b => {
+          if (b.dataset.url === track.url) updateLikeButton(b, true);
+        });
+      }
+
+      showToast('✓ Трек сохранён и добавлен в избранное');
+      refreshFavorites();
+      Offline.list().then(tracks => Sync.pushOffline(tracks));
+    },
+    onError: (msg) => {
+      updateDownloadButton(btn, 'idle');
+      showToast('Ошибка загрузки: ' + msg, 'error');
+    },
+    });
+  }); // showVpnHint
+}
+
+async function handleDelete(track, btn) {
+  const ok = await showConfirm('Удалить «' + track.title + '» из загрузок?');
+  if (!ok) return;
+  await Offline.remove(track.url);
+  updateDownloadButton(btn, 'idle');
+  const pbBtn = document.getElementById('playerDownloadBtn');
+  if (pbBtn && pbBtn.dataset.url === track.url) updateDownloadButton(pbBtn, 'idle');
+  showToast('Трек удалён из загрузок');
+  refreshFavorites();
+}
+
+// ── Share ─────────────────────────────────────────────────────
+function handleShare(track) {
+  const url  = location.origin + location.pathname + '?track=' + encodeURIComponent(track.url);
+  const text = (track.artist || '') + ' — ' + (track.title || '');
+
+  if (navigator.share) {
+    navigator.share({ title: text, url }).catch(() => {});
+  } else {
+    navigator.clipboard.writeText(url)
+      .then(() => showToast('🔗 Ссылка скопирована'))
+      .catch(() => showToast('Не удалось скопировать ссылку', 'error'));
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// PLAYER BAR
+// ════════════════════════════════════════════════════════════════
+function initPlayerBar() {
+  document.getElementById('playBtn').addEventListener('click',    () => Player.togglePlay());
+  document.getElementById('prevBtn').addEventListener('click',    () => Player.prev());
+  document.getElementById('nextBtn').addEventListener('click',    () => Player.next());
+
+  document.getElementById('shuffleBtn').addEventListener('click', function() {
+    this.classList.toggle('active', Player.toggleShuffle());
+  });
+
+  document.getElementById('repeatBtn').addEventListener('click', function() {
+    this.classList.toggle('active', Player.toggleRepeat());
+  });
+
+  document.getElementById('progressBar').addEventListener('click', e => {
+    const bar = e.currentTarget;
+    const pct = ((e.clientX - bar.getBoundingClientRect().left) / bar.offsetWidth) * 100;
+    Player.seek(pct);
+  });
+
+  const vol = document.getElementById('volumeSlider');
+  vol.addEventListener('input', () => {
+    Player.setVolume(vol.value / 100);
+    localStorage.setItem('ss_volume', vol.value);
+    updateVolumeStyle(vol.value);
+  });
+
+  document.getElementById('heartBtn').addEventListener('click', () => {
+    const track = Player.currentTrack;
+    if (!track) return;
+    const isNowLiked = Liked.toggle(track);
+    updatePlayerBar({ track });
+    refreshFavorites();
+    document.querySelectorAll('.like-btn[data-url]').forEach(btn => {
+      if (btn.dataset.url === track.url) updateLikeButton(btn, isNowLiked);
+    });
+    showToast(isNowLiked ? '♥ Добавлено в избранное' : '♡ Убрано из избранного');
+  });
+
+  document.getElementById('playerDownloadBtn').addEventListener('click', async () => {
+    const track = Player.currentTrack;
+    if (!track) return;
+    const btn = document.getElementById('playerDownloadBtn');
+    if (btn.classList.contains('downloaded')) {
+      handleDelete(track, btn);
+    } else {
+      const cardBtn = document.querySelector('.download-btn[data-url]');
+      handleDownload(track, cardBtn && cardBtn.dataset.url === track.url ? cardBtn : btn);
+    }
+  });
+
+  document.getElementById('playerShareBtn').addEventListener('click', () => {
+    const track = Player.currentTrack;
+    if (track) handleShare(track);
+  });
+}
+
+function initPlayerEvents() {
+  document.addEventListener('player:track-changed', ({ detail }) => {
+    updatePlayerBar({ track: detail.track });
+    markPlayingTrack(detail.track.url);
+    if (Wave.isActive()) updateWaveNowPlaying(detail.track);
+  });
+
+  document.addEventListener('player:state-changed', ({ detail }) => {
+    updatePlayerBar({ playing: detail.playing });
+  });
+
+  document.addEventListener('player:progress', ({ detail }) => {
+    updatePlayerBar({
+      percent:     detail.percent,
+      currentTime: detail.currentTime,
+      duration:    detail.duration,
+    });
+  });
+
+  document.addEventListener('player:error', ({ detail }) => {
+    showToast('Ошибка воспроизведения: ' + detail.message, 'error');
+  });
+}
+
+function restoreVolume() {
+  const saved = localStorage.getItem('ss_volume') || '80';
+  const vol = document.getElementById('volumeSlider');
+  vol.value = saved;
+  Player.setVolume(saved / 100);
+  updateVolumeStyle(saved);
+}
+
+function updateVolumeStyle(value) {
+  const vol = document.getElementById('volumeSlider');
+  vol.style.background =
+    'linear-gradient(to right, var(--accent) ' + value + '%, var(--border) ' + value + '%)';
 }
